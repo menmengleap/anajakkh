@@ -1,0 +1,218 @@
+//! Self-contained HTML report renderer (inline CSS, no external assets).
+
+use super::Report;
+
+/// Render `report` as a standalone HTML document.
+pub fn render(report: &Report) -> String {
+    let mut out = String::new();
+    out.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n");
+    out.push_str(&format!("<title>{}</title>\n", esc(&report.title)));
+    out.push_str(HEAD_CSS);
+    out.push_str("</head>\n<body>\n");
+    out.push_str("<div class=\"container\">\n");
+
+    out.push_str(&format!("<h1>{}</h1>\n", esc(&report.title)));
+    out.push_str("<dl class=\"meta\">\n");
+    out.push_str(&format!(
+        "<dt>Session</dt><dd><code>{}</code></dd>\n",
+        esc(&report.session_id)
+    ));
+    out.push_str(&format!(
+        "<dt>Generated</dt><dd>{}</dd>\n",
+        esc(&report.generated_at.to_rfc3339())
+    ));
+    if let Some(scope) = &report.scope {
+        out.push_str(&format!(
+            "<dt>Scope</dt><dd>{}</dd>\n",
+            esc(&scope.summary())
+        ));
+    }
+    if !report.targets.is_empty() {
+        out.push_str(&format!(
+            "<dt>Targets</dt><dd>{}</dd>\n",
+            esc(&report.targets.join(", "))
+        ));
+    }
+    out.push_str("</dl>\n");
+
+    out.push_str("<h2>Summary</h2>\n<ul class=\"summary\">\n");
+    if let Some(summary) = &report.summary {
+        out.push_str(&format!(
+            "<li>Steps completed: {} ({} skipped, {} failed)</li>\n",
+            summary.steps_completed, summary.steps_skipped, summary.steps_failed
+        ));
+        if !summary.tools_used.is_empty() {
+            out.push_str(&format!(
+                "<li>Tools used: {}</li>\n",
+                esc(&summary.tools_used.join(", "))
+            ));
+        }
+    }
+    out.push_str(&format!(
+        "<li>Evidence records: {}</li>\n",
+        report.evidence.len()
+    ));
+    out.push_str(&format!("<li>Findings: {}</li>\n", report.findings.len()));
+    out.push_str("</ul>\n");
+
+    if !report.findings.is_empty() {
+        out.push_str("<h2>Findings</h2>\n<table>\n");
+        out.push_str("<thead><tr><th>Severity</th><th>Title</th><th>Confidence</th><th>Target</th><th>Evidence</th></tr></thead>\n");
+        out.push_str("<tbody>\n");
+        for finding in &report.findings {
+            out.push_str(&format!(
+                "<tr><td><span class=\"sev sev-{}\">{}</span></td><td>{}</td><td>{:.0}%</td><td>{}</td><td>{}</td></tr>\n",
+                finding.severity.as_str(),
+                finding.severity.as_str(),
+                esc(&finding.title),
+                finding.confidence * 100.0,
+                esc(&finding.target),
+                finding.evidence_ids.len(),
+            ));
+        }
+        out.push_str("</tbody>\n</table>\n");
+
+        for (index, finding) in report.findings.iter().enumerate() {
+            out.push_str(&format!(
+                "<h3>{}. {} <span class=\"sev sev-{}\">{}</span></h3>\n",
+                index + 1,
+                esc(&finding.title),
+                finding.severity.as_str(),
+                finding.severity.as_str(),
+            ));
+            out.push_str("<ul class=\"finding-meta\">\n");
+            out.push_str(&format!(
+                "<li>Confidence: {:.0}% · Source: {}</li>\n",
+                finding.confidence * 100.0,
+                finding.source.as_str()
+            ));
+            out.push_str(&format!("<li>Target: {}</li>\n", esc(&finding.target)));
+            out.push_str(&format!(
+                "<li>Evidence: <code>{}</code></li>\n",
+                esc(&finding.evidence_ids.join(", "))
+            ));
+            if let Some(category) = &finding.category {
+                out.push_str(&format!("<li>Category: {}</li>\n", esc(category)));
+            }
+            out.push_str("</ul>\n");
+            if !finding.description.is_empty() {
+                out.push_str(&format!("<p>{}</p>\n", esc(&finding.description)));
+            }
+            if let Some(recommendation) = &finding.recommendation {
+                out.push_str(&format!(
+                    "<p class=\"rec\"><strong>Recommendation:</strong> {}</p>\n",
+                    esc(recommendation)
+                ));
+            }
+        }
+    }
+
+    if !report.evidence.is_empty() {
+        out.push_str("<h2>Evidence</h2>\n<table>\n");
+        out.push_str("<thead><tr><th>Type</th><th>Source</th><th>Target</th><th>ID</th><th>Data</th></tr></thead>\n");
+        out.push_str("<tbody>\n");
+        for item in &report.evidence {
+            out.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td><code>{}</code></td><td><code>{}</code></td></tr>\n",
+                item.r#type.as_str(),
+                item.source,
+                esc(&item.target),
+                esc(&item.id),
+                esc(&serde_json::to_string(&item.data).unwrap_or_default()),
+            ));
+        }
+        out.push_str("</tbody>\n</table>\n");
+    }
+
+    out.push_str("<footer>Generated by ANAJAKKH — AI Red Team Security Agent.</footer>\n");
+    out.push_str("</div>\n</body>\n</html>\n");
+    out
+}
+
+/// Escape HTML-significant characters.
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+const HEAD_CSS: &str = r#"<style>
+body { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; margin: 0; background: #f7f7f8; color: #1f2328; }
+.container { max-width: 960px; margin: 2rem auto; padding: 0 1rem; }
+h1 { border-bottom: 2px solid #0969da; padding-bottom: .4rem; }
+h2 { margin-top: 2rem; border-bottom: 1px solid #d0d7de; padding-bottom: .3rem; }
+h3 { margin-top: 1.5rem; }
+dl.meta { display: grid; grid-template-columns: 6rem 1fr; gap: .3rem 1rem; }
+dt { font-weight: 600; color: #57606a; }
+code { background: #eaeef2; padding: .1rem .35rem; border-radius: 4px; font-size: .85em; }
+table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+th, td { border: 1px solid #d0d7de; padding: .45rem .6rem; text-align: left; font-size: .92em; }
+th { background: #f0f3f6; }
+.sev { display: inline-block; padding: .05rem .5rem; border-radius: 10px; font-size: .8em; font-weight: 600; }
+.sev-critical, .sev-high { background: #d1242f; color: #fff; }
+.sev-medium { background: #e8862d; color: #fff; }
+.sev-low { background: #e3b341; color: #1f2328; }
+.sev-informational { background: #d0d7de; color: #1f2328; }
+.rec { background: #fff8c5; border-left: 4px solid #e3b341; padding: .5rem .8rem; }
+footer { margin-top: 3rem; color: #57606a; font-size: .85em; }
+</style>
+"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evidence::{Evidence, EvidenceType};
+    use crate::findings::{Finding, Severity};
+    use std::path::PathBuf;
+
+    #[test]
+    fn html_escapes_dangerous_content() {
+        let finding = Finding::observed(
+            "<script>alert(1)</script>",
+            Severity::Medium,
+            "10.0.0.1",
+            "description & more",
+            None,
+            vec!["ev-1".to_string()],
+        );
+        let evidence = Evidence::new(
+            EvidenceType::Service,
+            "nmap",
+            "10.0.0.1",
+            serde_json::json!({"port": 23}),
+        );
+        let report = Report::new(
+            "s1",
+            PathBuf::from("/tmp"),
+            None,
+            vec![],
+            None,
+            vec![evidence],
+            vec![finding],
+        );
+        let html = render(&report);
+        assert!(!html.contains("<script>alert(1)</script>"));
+        assert!(html.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+        assert!(html.contains("description &amp; more"));
+        assert!(html.contains("sev-medium"));
+    }
+
+    #[test]
+    fn html_has_structure() {
+        let html = render(&Report::new(
+            "s0",
+            PathBuf::from("/tmp"),
+            None,
+            vec![],
+            None,
+            vec![],
+            vec![],
+        ));
+        assert!(html.contains("<!DOCTYPE html>"));
+        assert!(html.contains("<h2>Summary</h2>"));
+        assert!(html.contains("Findings: 0"));
+        assert!(html.contains("</html>"));
+    }
+}

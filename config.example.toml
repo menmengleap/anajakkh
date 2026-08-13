@@ -1,0 +1,10 @@
+# ANAJAKKH example configuration.
+# Copy to <workspace>/config.toml (default workspace: ~/.anajakkh).
+
+[ai]
+# "openai" for any OpenAI-compatible API, or "echo" for offline mode.
+provider = "openai"
+model = "gpt-4o-mini"
+base_url = "https://api.openai.com/v1"
+# Name of the environment variable holding the API key.
+api_key_env = "OPENAI_API_KEY"
